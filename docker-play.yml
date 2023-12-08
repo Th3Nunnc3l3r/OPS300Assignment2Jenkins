@@ -1,0 +1,75 @@
+---
+- name: Install and set up Docker
+  hosts: ops300
+  become: yes
+  tasks:
+  - name: Install Docker
+    apt:
+      name: docker.io
+    
+  - name: Start and enable Docker
+    service:
+      name: docker
+      enabled: true
+      state: started
+
+- name: Set up Docker Swarm Manager
+  hosts: manager
+  become: yes
+  tasks:
+  - name: Set up Docker Swarm
+    docker_swarm:
+      state: present
+      listen_addr: "{{ ansible_default_ipv4.address }}:2377"
+      advertise_addr: "{{ ansible_default_ipv4.address }}"
+    register: swarm_init
+
+  - name: Copy Docker Stack config to manager
+    copy:
+      src: /home/lnunn/a1-stack
+      dest: /home/lnunn
+      owner: lnunn
+      group: lnunn
+      mode: 311
+
+  - name: Copy certificate for registry server to manager
+    copy:
+      src: /certs/registry.crt
+      dest: /certs/registry
+      owner: root
+      group: root
+      mode: 311
+
+  - name: Copy key for registry server to manager
+    copy:
+      src: /certs/registry.key
+      dest: /certs/registry
+      owner: root
+      group: root
+      mode: 300
+
+  - name: Copy Docker registry data to manager
+    copy:
+      src: /var/lib/docker-registry
+      dest: /var/lib
+      owner: root
+      group: root
+
+- name: Add worker nodes to Docker Swarm
+  become: yes
+  hosts: workers
+  tasks:
+  - name: Retrieve worker join token
+    command: docker swarm join-token -q worker
+    register: worker_join_token
+    delegate_to: 172.16.4.1
+    changed_when: false
+
+  - name: Add worker nodes to Docker Swarm
+    command: docker swarm join --token {{ worker_join_token.stdout }} 172.16.4.1:2377
+    register: swarm_join
+    changed_when: swarm_join.rc == 0
+    failed_when: swarm_join.rc > 1
+  tags:
+  - never 
+  - add_nodes
